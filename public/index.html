@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Analytics Platform</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>Game Analytics & Recommendations</h1>
+
+    <div>
+        <h2>Player Analytics</h2>
+        <button onclick="getPlayerAnalytics('player123')">Get Analytics</button>
+        <div id="analytics-result"></div>
+    </div>
+
+    <div>
+        <h2>Game Recommendations</h2>
+        <button onclick="getRecommendations('player123')">Get Recommendations</button>
+        <div id="recommendations-result"></div>
+    </div>
+
+    <div>
+        <h2>Submit Game Review</h2>
+        <textarea id="review-text"></textarea>
+        <button onclick="submitReview()">Submit Review</button>
+        <div id="review-result"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
