@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models');
 const auth = require('../middleware/auth');
-const hltb = require('howlongtobeat');
-const hltbService = new hltb.HowLongToBeatService();
+const hltb = require('howlongtobeat-js');
+const hltbService = new hltb.HowLongToBeat();
 
 // Search for games in HLTB database
 router.get('/search/:query', auth, async (req, res) => {
@@ -48,7 +48,6 @@ router.get('/details/:gameId', auth, async (req, res) => {
                 completionistTime: gameDetail.gameplayCompletionist || null
             });
         }
-        
         res.json(game);
     } catch (err) {
         console.error(err.message);

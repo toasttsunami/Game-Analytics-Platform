@@ -13,7 +13,7 @@ app.use(bodyParser.json());
 app.use(express.static('public'));
 
 // Routes
-app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth', require('./routes/authentication')); // Fixed route import
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/games', require('./routes/games'));
 app.use('/api/recommendations', require('./routes/recommendations'));

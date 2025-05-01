@@ -3,8 +3,8 @@ const db = require('../models');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const { Op } = require('sequelize');
-const hltb = require('howlongtobeat');
-const hltbService = new hltb.HowLongToBeatService();
+const hltb = require('howlongtobeat-js');
+const hltbService = new hltb.HowLongToBeat();
 
 // Get game recommendations for a player
 router.get('/:playerId', auth, async (req, res) => {
