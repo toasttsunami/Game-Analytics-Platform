@@ -11,8 +11,11 @@ module.exports = async function(req, res, next) {
   }
 
   try {
+    // Get JWT secret from environment variable with fallback
+    const jwtSecret = process.env.JWT_SECRET || 'gamePlatformSecret';
+    
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'gamePlatformSecret');
+    const decoded = jwt.verify(token, jwtSecret);
     
     // Add player data to request
     req.player = decoded.player;

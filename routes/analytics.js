@@ -15,41 +15,85 @@ router.post('/track', auth, async (req, res) => {
             return res.status(404).json({ error: 'Player not found' });
         }
 
-        let userGame = await db.UserGame.findOne({
-            where: { playerId, gameId }
-        });
+        // Only validate gameId if it's provided and needed for the action
+        if (gameId && ['start_session', 'end_session', 'update_playtime', 'complete_game'].includes(action)) {
+            let userGame = await db.UserGame.findOne({
+                where: { playerId, gameId }
+            });
 
-        if (!userGame && gameId) {
-            return res.status(404).json({ error: 'Game not found in user library' });
-        }
-
-        if (action === 'start_session') {
-            // Store session start time in player object temporarily
-            player.sessionStart = Date.now();
-            await player.save();
-        } else if (action === 'end_session' && player.sessionStart) {
-            // Calculate session time and update total playtime
-            if (gameId && userGame) {
-                const sessionTime = (Date.now() - player.sessionStart) / 3600000; // Convert ms to hours
-                userGame.playtime += sessionTime;
-                await userGame.save();
+            if (!userGame) {
+                return res.status(404).json({ error: 'Game not found in user library' });
             }
-            player.sessionStart = null;
-            await player.save();
-        } else if (action === 'update_playtime' && time && gameId && userGame) {
-            // Directly update playtime with provided value
-            userGame.playtime = time;
-            await userGame.save();
-        } else if (action === 'complete_game' && gameId && userGame) {
-            userGame.status = 'completed';
-            userGame.completedDate = new Date();
-            await userGame.save();
-        } else if (action === 'level_complete') {
+            
+            // Process game-specific actions
+            if (action === 'start_session') {
+                // Store session start time in player object temporarily
+                player.sessionStart = Date.now();
+                player.sessionGameId = gameId;
+                await player.save();
+                
+                return res.json({ success: true, message: 'Session started' });
+            } 
+            else if (action === 'end_session' && player.sessionStart) {
+                // Verify the game ID matches the started session
+                if (player.sessionGameId !== gameId) {
+                    return res.status(400).json({ error: 'Game ID mismatch between session start and end' });
+                }
+                
+                // Calculate session time and update total playtime
+                const sessionTime = (Date.now() - player.sessionStart) / 3600000; // Convert ms to hours
+                
+                // Only update if the session time is reasonable (less than 24 hours)
+                if (sessionTime < 24) {
+                    userGame.playtime += sessionTime;
+                    await userGame.save();
+                }
+                
+                player.sessionStart = null;
+                player.sessionGameId = null;
+                await player.save();
+                
+                return res.json({ 
+                    success: true, 
+                    message: 'Session ended', 
+                    sessionTime: parseFloat(sessionTime.toFixed(2)) 
+                });
+            } 
+            else if (action === 'update_playtime' && time !== undefined) {
+                // Validate time is a positive number
+                if (typeof time !== 'number' || time < 0) {
+                    return res.status(400).json({ error: 'Invalid playtime value' });
+                }
+                
+                userGame.playtime = time;
+                await userGame.save();
+                
+                return res.json({ 
+                    success: true, 
+                    message: 'Playtime updated',
+                    newPlaytime: time
+                });
+            } 
+            else if (action === 'complete_game') {
+                userGame.status = 'completed';
+                userGame.completedDate = new Date();
+                await userGame.save();
+                
+                return res.json({ success: true, message: 'Game marked as completed' });
+            }
+        } 
+        else if (action === 'level_complete') {
             player.levelsCompleted++;
             await player.save();
+            
+            return res.json({ 
+                success: true, 
+                message: 'Level completion recorded',
+                totalLevels: player.levelsCompleted 
+            });
         }
 
-        res.json({ success: true });
+        return res.status(400).json({ error: 'Invalid action or missing required parameters' });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server error');

@@ -5,14 +5,59 @@ const auth = require('../middleware/auth');
 const hltb = require('howlongtobeat-js');
 const hltbService = new hltb.HowLongToBeat();
 
+// Helper function to handle HLTB API calls with timeout and retries
+async function callHltbApi(method, param, retries = 2, timeout = 5000) {
+    return new Promise(async (resolve, reject) => {
+        let attempts = 0;
+        let lastError;
+        
+        // Set a timeout to fail if the API takes too long
+        const timeoutId = setTimeout(() => {
+            reject(new Error('HLTB API timeout'));
+        }, timeout);
+        
+        while (attempts <= retries) {
+            try {
+                let result;
+                if (method === 'search') {
+                    result = await hltbService.search(param);
+                } else if (method === 'detail') {
+                    result = await hltbService.detail(param);
+                }
+                
+                clearTimeout(timeoutId);
+                return resolve(result);
+            } catch (err) {
+                lastError = err;
+                attempts++;
+                // Wait briefly before retry
+                if (attempts <= retries) {
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+        }
+        
+        clearTimeout(timeoutId);
+        reject(lastError || new Error('HLTB API failed'));
+    });
+}
+
 // Search for games in HLTB database
 router.get('/search/:query', auth, async (req, res) => {
     try {
-        const results = await hltbService.search(req.params.query);
+        const results = await callHltbApi('search', req.params.query);
+        
+        if (!results || results.length === 0) {
+            return res.json({ message: 'No games found', results: [] });
+        }
+        
         res.json(results);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server error');
+        console.error('HLTB Search Error:', err.message);
+        res.status(503).json({ 
+            error: 'Game search service temporarily unavailable',
+            message: 'Unable to search for games at this time. Please try again later.'
+        });
     }
 });
 
@@ -25,28 +70,36 @@ router.get('/details/:gameId', auth, async (req, res) => {
         let game = await db.Game.findByPk(gameId);
         
         if (!game) {
-            // Get game details from HLTB
-            const gameDetail = await hltbService.detail(gameId);
-            
-            if (!gameDetail) {
-                return res.status(404).json({ msg: 'Game not found in HLTB database' });
+            try {
+                // Get game details from HLTB
+                const gameDetail = await callHltbApi('detail', gameId);
+                
+                if (!gameDetail) {
+                    return res.status(404).json({ error: 'Game not found in database' });
+                }
+                
+                // Save game to database
+                game = await db.Game.create({
+                    id: gameId,
+                    name: gameDetail.name,
+                    imageUrl: gameDetail.imageUrl,
+                    description: gameDetail.description || '',
+                    platforms: gameDetail.platforms || [],
+                    genres: gameDetail.genres || [],
+                    developer: gameDetail.developer || '',
+                    publisher: gameDetail.publisher || '',
+                    releaseDate: gameDetail.releaseDate ? new Date(gameDetail.releaseDate) : null,
+                    mainStoryTime: gameDetail.gameplayMain || null,
+                    mainPlusExtrasTime: gameDetail.gameplayMainExtra || null,
+                    completionistTime: gameDetail.gameplayCompletionist || null
+                });
+            } catch (apiErr) {
+                console.error('HLTB API Error:', apiErr.message);
+                return res.status(503).json({ 
+                    error: 'Game details service temporarily unavailable',
+                    message: 'Unable to fetch game details at this time. Please try again later.'
+                });
             }
-            
-            // Save game to database
-            game = await db.Game.create({
-                id: gameId,
-                name: gameDetail.name,
-                imageUrl: gameDetail.imageUrl,
-                description: gameDetail.description || '',
-                platforms: gameDetail.platforms || [],
-                genres: gameDetail.genres || [],
-                developer: gameDetail.developer || '',
-                publisher: gameDetail.publisher || '',
-                releaseDate: gameDetail.releaseDate ? new Date(gameDetail.releaseDate) : null,
-                mainStoryTime: gameDetail.gameplayMain || null,
-                mainPlusExtrasTime: gameDetail.gameplayMainExtra || null,
-                completionistTime: gameDetail.gameplayCompletionist || null
-            });
         }
         res.json(game);
     } catch (err) {
@@ -61,13 +114,23 @@ router.post('/add-to-library', auth, async (req, res) => {
         const playerId = req.player.id;
         const { gameId, status = 'not_played' } = req.body;
         
+        if (!gameId) {
+            return res.status(400).json({ error: 'Game ID is required' });
+        }
+        
+        // Check if valid status
+        const validStatuses = ['not_played', 'playing', 'completed', 'backlog'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status value' });
+        }
+        
         // Get game details
         let game = await db.Game.findByPk(gameId);
         
         if (!game) {
             // Try to fetch from HLTB if not in database
             try {
-                const gameDetail = await hltbService.detail(gameId);
+                const gameDetail = await callHltbApi('detail', gameId);
                 
                 if (gameDetail) {
                     game = await db.Game.create({
@@ -85,10 +148,14 @@ router.post('/add-to-library', auth, async (req, res) => {
                         completionistTime: gameDetail.gameplayCompletionist || null
                     });
                 } else {
-                    return res.status(404).json({ msg: 'Game not found' });
+                    return res.status(404).json({ error: 'Game not found' });
                 }
             } catch (error) {
-                return res.status(404).json({ msg: 'Game not found' });
+                console.error('HLTB API Error:', error.message);
+                return res.status(503).json({ 
+                    error: 'Game details service temporarily unavailable',
+                    message: 'Unable to fetch game details at this time. Please try again later.'
+                });
             }
         }
         
@@ -98,7 +165,7 @@ router.post('/add-to-library', auth, async (req, res) => {
         });
         
         if (existingGame) {
-            return res.status(400).json({ msg: 'Game already in library' });
+            return res.status(400).json({ error: 'Game already in library' });
         }
         
         // Add to user library
@@ -125,13 +192,33 @@ router.put('/update-library/:gameId', auth, async (req, res) => {
         const { gameId } = req.params;
         const { status, playtime, rating } = req.body;
         
+        // Validate inputs
+        if (status) {
+            const validStatuses = ['not_played', 'playing', 'completed', 'backlog'];
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({ error: 'Invalid status value' });
+            }
+        }
+        
+        if (playtime !== undefined) {
+            if (typeof playtime !== 'number' || playtime < 0) {
+                return res.status(400).json({ error: 'Playtime must be a positive number' });
+            }
+        }
+        
+        if (rating !== undefined) {
+            if (!Number.isInteger(rating) || rating < 1 || rating > 10) {
+                return res.status(400).json({ error: 'Rating must be an integer between 1 and 10' });
+            }
+        }
+        
         // Find game in user library
         const userGame = await db.UserGame.findOne({
             where: { playerId, gameId }
         });
         
         if (!userGame) {
-            return res.status(404).json({ msg: 'Game not found in library' });
+            return res.status(404).json({ error: 'Game not found in library' });
         }
         
         // Update fields
@@ -187,12 +274,12 @@ router.delete('/library/:gameId', auth, async (req, res) => {
         });
         
         if (!userGame) {
-            return res.status(404).json({ msg: 'Game not found in library' });
+            return res.status(404).json({ error: 'Game not found in library' });
         }
         
         await userGame.destroy();
         
-        res.json({ msg: 'Game removed from library' });
+        res.json({ message: 'Game removed from library' });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server error');
